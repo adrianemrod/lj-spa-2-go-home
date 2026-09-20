@@ -45,7 +45,7 @@ export function Sidebar({ items }: { items: NavItem[] }) {
   return (
     <aside data-theme="ops" className="hidden w-60 shrink-0 flex-col border-r border-border bg-bg px-3 py-5 md:flex">
       <div className="mb-8 px-2">
-        <Logo />
+        <Logo size="sm" />
       </div>
       <nav className="flex flex-1 flex-col gap-0.5">
         {items.map((item) => {

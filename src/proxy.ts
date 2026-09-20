@@ -17,8 +17,17 @@ const PUBLIC_PREFIXES = [
   "/api/auth",
   "/book", // public client booking portal
   "/api/public", // public booking API (services, availability, create booking)
-  "/icons",
 ];
+
+// Static files under public/ (logo, icons, fonts, …) are never behind the
+// auth gate — they're requested directly by the browser on public pages
+// (the login screen, the homepage, the PWA manifest) with no session
+// cookie attached. Missed this for /brand/logo.png when the real logo was
+// added: it 307'd to /login instead of rendering. Path-prefix allowlists
+// (the old "/icons" entry) don't scale to every asset folder someone adds
+// later, so this matches by extension instead — the same class of fix as
+// the /api/services and /api/therapists/me/schedule gate bugs earlier.
+const STATIC_ASSET_PATTERN = /\.(png|jpe?g|svg|ico|webp|gif|avif|woff2?|ttf|otf)$/i;
 
 function forPagePrefix(prefix: string) {
   return (p: string) => p === prefix || p.startsWith(`${prefix}/`);
@@ -87,6 +96,7 @@ export async function proxy(req: NextRequest) {
   const isPublic =
     pathname.startsWith("/_next") ||
     pathname.startsWith("/favicon") ||
+    STATIC_ASSET_PATTERN.test(pathname) ||
     PUBLIC_EXACT.includes(pathname) ||
     PUBLIC_PREFIXES.some((p) => pathname.startsWith(p));
 

@@ -40,7 +40,7 @@ export default function ForgotPasswordPage() {
     <div data-theme="ops" className="flex min-h-dvh items-center justify-center bg-bg px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex justify-center">
-          <Logo />
+          <Logo size="lg" />
         </div>
         <Card className="p-6">
           <h1 className="mb-1 font-serif text-xl text-fg">Reset your password</h1>

@@ -22,7 +22,7 @@ export default function LoginPage() {
     <div data-theme="ops" className="flex min-h-dvh items-center justify-center bg-bg px-4">
       <div className="w-full max-w-sm">
         <div className="mb-8 flex justify-center">
-          <Logo />
+          <Logo size="lg" />
         </div>
         <Suspense fallback={<Card className="p-6" />}>
           <LoginForm />
