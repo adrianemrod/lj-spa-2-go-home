@@ -22,30 +22,35 @@ const PUBLIC_PREFIXES = [
 
 // Route matcher -> roles allowed. Unlisted authenticated paths are open to
 // any logged-in role (e.g. /account, a shared booking detail page).
+//
+// This is a coarse, page-and-API-prefix-level gate for UX (redirect away
+// from / 403 a section a role shouldn't see). It is NOT the security
+// boundary — every API route re-checks with requirePermission()/
+// requireRole() against the real RBAC matrix in src/lib/auth/permissions.ts
+// before touching Prisma, so a mistake here can't leak data.
+function forPrefixes(...prefixes: string[]) {
+  return (p: string) => prefixes.some((prefix) => p === prefix || p.startsWith(`${prefix}/`) || p.startsWith(`/api${prefix}`));
+}
+
 const ROLE_GATES: { test: (pathname: string) => boolean; roles: Role[] }[] = [
-  { test: (p) => p.startsWith("/admin"), roles: ["SUPER_ADMIN", "OWNER"] },
   {
-    test: (p) => p.startsWith("/dashboard") || p.startsWith("/calendar") || p.startsWith("/live-map"),
+    test: forPrefixes("/dashboard", "/calendar", "/live-map", "/bookings"),
     roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"],
   },
   {
-    test: (p) => p.startsWith("/bookings"),
+    test: forPrefixes("/therapists"),
     roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"],
   },
-  {
-    test: (p) => p.startsWith("/therapists"),
-    roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"],
-  },
-  { test: (p) => p.startsWith("/clients"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER"] },
-  { test: (p) => p.startsWith("/services"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
-  { test: (p) => p.startsWith("/sales"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
-  { test: (p) => p.startsWith("/expenses"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
-  { test: (p) => p.startsWith("/performance"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
-  { test: (p) => p.startsWith("/reports"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING", "MANAGER"] },
-  { test: (p) => p.startsWith("/settings"), roles: ["SUPER_ADMIN", "OWNER"] },
-  { test: (p) => p.startsWith("/audit-log"), roles: ["SUPER_ADMIN", "OWNER"] },
-  { test: (p) => p.startsWith("/app"), roles: ["THERAPIST"] }, // therapist PWA
-  { test: (p) => p.startsWith("/my"), roles: ["CLIENT"] }, // client self-service
+  { test: forPrefixes("/clients"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER"] },
+  { test: forPrefixes("/services"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
+  { test: forPrefixes("/sales"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
+  { test: forPrefixes("/expenses"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
+  { test: forPrefixes("/performance"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
+  { test: forPrefixes("/reports"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING", "MANAGER"] },
+  { test: forPrefixes("/settings"), roles: ["SUPER_ADMIN", "OWNER"] },
+  { test: forPrefixes("/audit-log"), roles: ["SUPER_ADMIN", "OWNER"] },
+  { test: forPrefixes("/app"), roles: ["THERAPIST"] }, // therapist PWA
+  { test: forPrefixes("/my"), roles: ["CLIENT"] }, // client self-service
 ];
 
 const ROLE_HOME: Record<Role, string> = {
