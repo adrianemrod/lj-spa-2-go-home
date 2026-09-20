@@ -1,0 +1,704 @@
+// L&J Spa 2 Go Home — domain schema
+// Business timezone: Asia/Manila. All timestamps are stored in UTC (timestamptz)
+// and converted at the presentation layer — never trust server locale.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// RBAC / AUTH
+// ============================================================
+
+enum Role {
+  SUPER_ADMIN
+  OWNER
+  MANAGER
+  DISPATCHER
+  THERAPIST
+  ACCOUNTING
+  CLIENT
+}
+
+enum UserStatus {
+  ACTIVE
+  DISABLED
+  PENDING
+}
+
+model User {
+  id           String     @id @default(uuid()) @db.Uuid
+  email        String     @unique
+  passwordHash String
+  name         String
+  phone        String?
+  role         Role
+  status       UserStatus @default(ACTIVE)
+  lastLoginAt  DateTime?
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  therapist Therapist?
+  client    Client?
+
+  createdBookings     Booking[]            @relation("BookingCreatedBy")
+  bookingStatusEvents BookingStatusEvent[] @relation("StatusChangedBy")
+  bookingNotes        BookingNote[]        @relation("NoteAuthor")
+  recordedPayments    Payment[]            @relation("PaymentRecordedBy")
+  processedRefunds    Refund[]             @relation("RefundProcessedBy")
+  createdExpenses     Expense[]            @relation("ExpenseCreatedBy")
+  approvedExpenses    Expense[]            @relation("ExpenseApprovedBy")
+  auditLogs           AuditLog[]
+  notifications       Notification[]
+  updatedSettings     Setting[]
+  sentInvites         InviteToken[]        @relation("InviteSentBy")
+  passwordResets      PasswordResetToken[]
+
+  @@index([role])
+  @@index([status])
+}
+
+model InviteToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  email       String
+  role        Role
+  token       String    @unique
+  invitedById String    @db.Uuid
+  invitedBy   User      @relation("InviteSentBy", fields: [invitedById], references: [id])
+  expiresAt   DateTime
+  acceptedAt  DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@index([email])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// ============================================================
+// THERAPISTS
+// ============================================================
+
+enum EmploymentStatus {
+  ACTIVE
+  ON_LEAVE
+  TERMINATED
+}
+
+// Live operational status — see src/lib/therapist-status/state-machine.ts
+// for the allowed transition graph. Never written to directly; always
+// through the state machine so invalid transitions are rejected.
+enum TherapistStatus {
+  OFFLINE
+  AVAILABLE
+  RESERVED
+  CONFIRMED
+  TRAVELING
+  ARRIVED
+  IN_SERVICE
+  COMPLETED
+  ON_BREAK
+  OFF_DUTY
+  EMERGENCY
+  LOCATION_UNAVAILABLE
+}
+
+model Therapist {
+  id     String @id @default(uuid()) @db.Uuid
+  userId String @unique @db.Uuid
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  photoUrl              String?
+  emergencyContactName  String?
+  emergencyContactPhone String?
+  employmentStatus      EmploymentStatus @default(ACTIVE)
+  hireDate              DateTime?        @db.Date
+  bio                   String?
+  areasServed           String[]         @default([])
+  maxTravelRadiusKm     Decimal          @default(15) @db.Decimal(6, 2)
+
+  // Base location used when offline / no live GPS yet (e.g. home or shop).
+  homeLat Decimal? @db.Decimal(9, 6)
+  homeLng Decimal? @db.Decimal(9, 6)
+
+  // Live operational location — only populated while on an active shift or
+  // en route/in-service. See LOCATION PRIVACY: never exposed to clients.
+  currentLat            Decimal?  @db.Decimal(9, 6)
+  currentLng            Decimal?  @db.Decimal(9, 6)
+  locationUpdatedAt     DateTime?
+  locationSharingActive Boolean   @default(false)
+
+  status          TherapistStatus @default(OFFLINE)
+  statusUpdatedAt DateTime        @default(now())
+
+  ratingAvg    Decimal? @db.Decimal(3, 2)
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  services       TherapistService[]
+  workingHours   TherapistWorkingHours[]
+  daysOff        TherapistDayOff[]
+  locationLogs   TherapistLocationLog[]
+  bookings       Booking[]
+  commissions    Commission[]
+  reviews        Review[]
+  waitlistPrefs  Waitlist[]
+  statusEvents   TherapistStatusEvent[]
+
+  @@index([status])
+  @@index([active])
+}
+
+// Append-only status transition history — powers stale-status alerts
+// ("traveling for 74 minutes, expected arrival was 6:15 PM").
+model TherapistStatusEvent {
+  id          String          @id @default(uuid()) @db.Uuid
+  therapistId String          @db.Uuid
+  therapist   Therapist       @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  fromStatus  TherapistStatus
+  toStatus    TherapistStatus
+  bookingId   String?         @db.Uuid
+  booking     Booking?        @relation(fields: [bookingId], references: [id])
+  note        String?
+  createdAt   DateTime        @default(now())
+
+  @@index([therapistId, createdAt])
+}
+
+model TherapistService {
+  id                String    @id @default(uuid()) @db.Uuid
+  therapistId       String    @db.Uuid
+  therapist         Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  serviceId         String    @db.Uuid
+  service           Service   @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  customCommissionType  CommissionType?
+  customCommissionValue Decimal?        @db.Decimal(8, 2)
+
+  @@unique([therapistId, serviceId])
+  @@index([serviceId])
+}
+
+// One row per (therapist, day-of-week). dayOfWeek: 0 = Sunday .. 6 = Saturday.
+// Start/end/break stored as minutes-past-midnight in Asia/Manila local time.
+model TherapistWorkingHours {
+  id                String    @id @default(uuid()) @db.Uuid
+  therapistId       String    @db.Uuid
+  therapist         Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  dayOfWeek         Int
+  startMinutes      Int
+  endMinutes        Int
+  breakStartMinutes Int?
+  breakEndMinutes   Int?
+  isActive          Boolean   @default(true)
+
+  @@unique([therapistId, dayOfWeek])
+}
+
+model TherapistDayOff {
+  id          String    @id @default(uuid()) @db.Uuid
+  therapistId String    @db.Uuid
+  therapist   Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  date        DateTime  @db.Date
+  reason      String?
+  createdAt   DateTime  @default(now())
+
+  @@unique([therapistId, date])
+  @@index([date])
+}
+
+// Location history — audit trail + staleness detection. Distinct from the
+// "current" pointer on Therapist so we can compute travel-in-progress and
+// answer "last GPS N minutes ago" honestly.
+model TherapistLocationLog {
+  id          String    @id @default(uuid()) @db.Uuid
+  therapistId String    @db.Uuid
+  therapist   Therapist @relation(fields: [therapistId], references: [id], onDelete: Cascade)
+  lat         Decimal   @db.Decimal(9, 6)
+  lng         Decimal   @db.Decimal(9, 6)
+  bookingId   String?   @db.Uuid
+  booking     Booking?  @relation(fields: [bookingId], references: [id])
+  recordedAt  DateTime  @default(now())
+
+  @@index([therapistId, recordedAt])
+}
+
+// ============================================================
+// SERVICES
+// ============================================================
+
+enum CommissionType {
+  FLAT
+  PERCENTAGE
+}
+
+model ServiceCategory {
+  id       String    @id @default(uuid()) @db.Uuid
+  name     String    @unique
+  sortOrder Int      @default(0)
+  services Service[]
+}
+
+model Service {
+  id                   String           @id @default(uuid()) @db.Uuid
+  categoryId           String?          @db.Uuid
+  category             ServiceCategory? @relation(fields: [categoryId], references: [id])
+  name                 String
+  description          String?
+  durationMinutes      Int
+  price                Decimal          @db.Decimal(10, 2)
+  commissionType       CommissionType   @default(PERCENTAGE)
+  commissionValue      Decimal          @db.Decimal(8, 2)
+  bufferMinutes        Int              @default(15)
+  requiredSkillTags    String[]         @default([])
+  active               Boolean          @default(true)
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  therapists TherapistService[]
+  addOns     ServiceAddOn[]
+  bookings   Booking[]
+
+  @@index([active])
+}
+
+model ServiceAddOn {
+  id        String   @id @default(uuid()) @db.Uuid
+  serviceId String   @db.Uuid
+  service   Service  @relation(fields: [serviceId], references: [id], onDelete: Cascade)
+  name      String
+  price     Decimal  @db.Decimal(10, 2)
+  active    Boolean  @default(true)
+}
+
+// ============================================================
+// CLIENTS / CRM
+// ============================================================
+
+model Client {
+  id               String   @id @default(uuid()) @db.Uuid
+  userId           String?  @unique @db.Uuid
+  user             User?    @relation(fields: [userId], references: [id])
+  name             String
+  phone            String
+  email            String?
+  notes            String?
+  marketingConsent Boolean  @default(false)
+  favoriteTherapistId String? @db.Uuid
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  addresses  ClientAddress[]
+  bookings   Booking[]
+  reviews    Review[]
+  waitlist   Waitlist[]
+
+  @@index([phone])
+  @@index([email])
+}
+
+model ClientAddress {
+  id           String   @id @default(uuid()) @db.Uuid
+  clientId     String   @db.Uuid
+  client       Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  label        String   @default("Home")
+  addressLine  String
+  landmark     String?
+  area         String?
+  lat          Decimal  @db.Decimal(9, 6)
+  lng          Decimal  @db.Decimal(9, 6)
+  isDefault    Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  bookings Booking[]
+
+  @@index([clientId])
+  @@index([lat, lng])
+}
+
+// ============================================================
+// BOOKINGS
+// ============================================================
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  ASSIGNED
+  TRAVELING
+  ARRIVED
+  IN_SERVICE
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIAL
+  PAID
+  REFUNDED
+  PARTIALLY_REFUNDED
+  VOID
+}
+
+enum PaymentMethod {
+  CASH
+  GCASH
+  MAYA
+  BANK_TRANSFER
+  ONLINE_GATEWAY
+}
+
+model Booking {
+  id            String   @id @default(uuid()) @db.Uuid
+  bookingNumber String   @unique
+
+  clientId    String  @db.Uuid
+  client      Client  @relation(fields: [clientId], references: [id])
+  therapistId String? @db.Uuid
+  therapist   Therapist? @relation(fields: [therapistId], references: [id])
+  serviceId   String  @db.Uuid
+  service     Service @relation(fields: [serviceId], references: [id])
+
+  addressId String?        @db.Uuid
+  address   ClientAddress? @relation(fields: [addressId], references: [id])
+
+  // Snapshot of the delivery address at booking time — a client's saved
+  // address may change later; the booking must keep what was true then.
+  clientAddressLine String
+  landmark          String?
+  latitude          Decimal @db.Decimal(9, 6)
+  longitude         Decimal @db.Decimal(9, 6)
+
+  date           DateTime @db.Date
+  scheduledStart DateTime
+  scheduledEnd   DateTime
+  actualStart    DateTime?
+  actualEnd      DateTime?
+
+  status BookingStatus @default(PENDING)
+
+  travelMinutes     Int?
+  distanceKm         Decimal? @db.Decimal(7, 2)
+  travelBufferMinutes Int?
+  estimatedArrival   DateTime?
+
+  paymentStatus PaymentStatus  @default(UNPAID)
+  paymentMethod PaymentMethod?
+  amount        Decimal        @db.Decimal(10, 2)
+  discount      Decimal        @default(0) @db.Decimal(10, 2)
+  tip           Decimal        @default(0) @db.Decimal(10, 2)
+
+  anyAvailableTherapist Boolean @default(false)
+  notes                 String?
+  internalNotes         String?
+  cancelReason          String?
+  cancelledAt           DateTime?
+  noShowAt               DateTime?
+
+  createdById String @db.Uuid
+  createdBy   User   @relation("BookingCreatedBy", fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  statusEvents     BookingStatusEvent[]
+  therapistStatusEvents TherapistStatusEvent[]
+  travelSnapshots  BookingTravel[]
+  bookingNotes     BookingNote[]
+  payments         Payment[]
+  commission       Commission?
+  reviews          Review[]
+  locationLogs     TherapistLocationLog[]
+  notifications    Notification[]
+
+  @@index([date])
+  @@index([therapistId])
+  @@index([clientId])
+  @@index([status])
+  @@index([scheduledStart])
+  @@index([latitude, longitude])
+  @@index([createdAt])
+}
+
+// Append-only audit trail of booking status transitions.
+model BookingStatusEvent {
+  id            String        @id @default(uuid()) @db.Uuid
+  bookingId     String        @db.Uuid
+  booking       Booking       @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  fromStatus    BookingStatus?
+  toStatus      BookingStatus
+  changedById   String?       @db.Uuid
+  changedBy     User?         @relation("StatusChangedBy", fields: [changedById], references: [id])
+  note          String?
+  createdAt     DateTime      @default(now())
+
+  @@index([bookingId, createdAt])
+}
+
+// A recalculation snapshot of travel time/distance for a booking — kept so
+// dispatchers can see what changed and when (traffic, reassignment, etc).
+model BookingTravel {
+  id              String   @id @default(uuid()) @db.Uuid
+  bookingId       String   @db.Uuid
+  booking         Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  fromLat         Decimal  @db.Decimal(9, 6)
+  fromLng         Decimal  @db.Decimal(9, 6)
+  toLat           Decimal  @db.Decimal(9, 6)
+  toLng           Decimal  @db.Decimal(9, 6)
+  distanceKm      Decimal  @db.Decimal(7, 2)
+  durationMinutes Int
+  provider        String
+  isEstimate      Boolean  @default(false)
+  calculatedAt    DateTime @default(now())
+
+  @@index([bookingId])
+}
+
+model BookingNote {
+  id         String   @id @default(uuid()) @db.Uuid
+  bookingId  String   @db.Uuid
+  booking    Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  authorId   String   @db.Uuid
+  author     User     @relation("NoteAuthor", fields: [authorId], references: [id])
+  body       String
+  internal   Boolean  @default(true)
+  createdAt  DateTime @default(now())
+
+  @@index([bookingId])
+}
+
+// ============================================================
+// PAYMENTS / COMMISSIONS
+// ============================================================
+
+model Payment {
+  id           String        @id @default(uuid()) @db.Uuid
+  bookingId    String        @db.Uuid
+  booking      Booking       @relation(fields: [bookingId], references: [id])
+  amount       Decimal       @db.Decimal(10, 2)
+  method       PaymentMethod
+  status       PaymentStatus
+  reference    String?
+  isDeposit    Boolean       @default(false)
+  recordedById String        @db.Uuid
+  recordedBy   User          @relation("PaymentRecordedBy", fields: [recordedById], references: [id])
+  paidAt       DateTime      @default(now())
+  createdAt    DateTime      @default(now())
+
+  refunds Refund[]
+
+  @@index([bookingId])
+}
+
+// Completed financial transactions are never deleted — reversed via Refund.
+model Refund {
+  id            String   @id @default(uuid()) @db.Uuid
+  paymentId     String   @db.Uuid
+  payment       Payment  @relation(fields: [paymentId], references: [id])
+  amount        Decimal  @db.Decimal(10, 2)
+  reason        String
+  processedById String   @db.Uuid
+  processedBy   User     @relation("RefundProcessedBy", fields: [processedById], references: [id])
+  processedAt   DateTime @default(now())
+
+  @@index([paymentId])
+}
+
+enum CommissionStatus {
+  PENDING
+  APPROVED
+  PAID
+}
+
+model Commission {
+  id               String            @id @default(uuid()) @db.Uuid
+  bookingId        String            @unique @db.Uuid
+  booking          Booking           @relation(fields: [bookingId], references: [id])
+  therapistId      String            @db.Uuid
+  therapist        Therapist         @relation(fields: [therapistId], references: [id])
+  baseAmount       Decimal           @db.Decimal(10, 2)
+  commissionType   CommissionType
+  commissionValue  Decimal           @db.Decimal(8, 2)
+  commissionAmount Decimal           @db.Decimal(10, 2)
+  status           CommissionStatus  @default(PENDING)
+  createdAt        DateTime          @default(now())
+
+  @@index([therapistId])
+  @@index([status])
+}
+
+// ============================================================
+// EXPENSES
+// ============================================================
+
+enum ExpenseStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+model ExpenseCategory {
+  id       String    @id @default(uuid()) @db.Uuid
+  name     String    @unique
+  active   Boolean   @default(true)
+  expenses Expense[]
+}
+
+model Expense {
+  id            String          @id @default(uuid()) @db.Uuid
+  date          DateTime        @db.Date
+  categoryId    String          @db.Uuid
+  category      ExpenseCategory @relation(fields: [categoryId], references: [id])
+  description   String
+  amount        Decimal         @db.Decimal(10, 2)
+  paymentMethod PaymentMethod
+  vendor        String?
+  receiptUrl    String?
+  status        ExpenseStatus   @default(PENDING)
+  createdById   String          @db.Uuid
+  createdBy     User            @relation("ExpenseCreatedBy", fields: [createdById], references: [id])
+  approvedById  String?         @db.Uuid
+  approvedBy    User?           @relation("ExpenseApprovedBy", fields: [approvedById], references: [id])
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([date])
+  @@index([categoryId])
+  @@index([status])
+}
+
+// ============================================================
+// NOTIFICATIONS
+// ============================================================
+
+enum NotificationChannel {
+  SMS
+  EMAIL
+  PUSH
+  IN_APP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+  READ
+}
+
+model NotificationTemplate {
+  id      String              @id @default(uuid()) @db.Uuid
+  key     String              @unique
+  channel NotificationChannel
+  subject String?
+  body    String
+  active  Boolean             @default(true)
+}
+
+model Notification {
+  id        String              @id @default(uuid()) @db.Uuid
+  userId    String              @db.Uuid
+  user      User                @relation(fields: [userId], references: [id])
+  bookingId String?             @db.Uuid
+  booking   Booking?            @relation(fields: [bookingId], references: [id])
+  channel   NotificationChannel
+  type      String
+  title     String
+  body      String
+  status    NotificationStatus  @default(PENDING)
+  createdAt DateTime            @default(now())
+  sentAt    DateTime?
+  readAt    DateTime?
+
+  @@index([userId, status])
+  @@index([bookingId])
+}
+
+// ============================================================
+// WAITLIST / REVIEWS
+// ============================================================
+
+enum WaitlistStatus {
+  WAITING
+  NOTIFIED
+  CONVERTED
+  EXPIRED
+  CANCELLED
+}
+
+model Waitlist {
+  id                  String         @id @default(uuid()) @db.Uuid
+  clientId            String         @db.Uuid
+  client              Client         @relation(fields: [clientId], references: [id])
+  serviceId           String         @db.Uuid
+  preferredTherapistId String?       @db.Uuid
+  preferredTherapist  Therapist?     @relation(fields: [preferredTherapistId], references: [id])
+  requestedDate       DateTime       @db.Date
+  windowStartMinutes  Int
+  windowEndMinutes    Int
+  areaLat             Decimal        @db.Decimal(9, 6)
+  areaLng             Decimal        @db.Decimal(9, 6)
+  radiusKm            Decimal        @default(10) @db.Decimal(6, 2)
+  status              WaitlistStatus @default(WAITING)
+  createdAt           DateTime       @default(now())
+
+  @@index([status, requestedDate])
+}
+
+model Review {
+  id          String    @id @default(uuid()) @db.Uuid
+  bookingId   String    @db.Uuid
+  booking     Booking   @relation(fields: [bookingId], references: [id])
+  clientId    String    @db.Uuid
+  client      Client    @relation(fields: [clientId], references: [id])
+  therapistId String    @db.Uuid
+  therapist   Therapist @relation(fields: [therapistId], references: [id])
+  rating      Int
+  comment     String?
+  createdAt   DateTime  @default(now())
+
+  @@index([therapistId])
+}
+
+// ============================================================
+// AUDIT LOG / SETTINGS
+// ============================================================
+
+model AuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String?  @db.Uuid
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  before    Json?
+  after     Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model Setting {
+  key           String   @id
+  value         Json
+  updatedById   String?  @db.Uuid
+  updatedBy     User?    @relation(fields: [updatedById], references: [id])
+  updatedAt     DateTime @updatedAt
+}
