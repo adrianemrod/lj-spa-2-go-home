@@ -32,6 +32,15 @@ function forPrefixes(...prefixes: string[]) {
   return (p: string) => prefixes.some((prefix) => p === prefix || p.startsWith(`${prefix}/`) || p.startsWith(`/api${prefix}`));
 }
 
+// Page-only variant: gates the page prefix but deliberately leaves its
+// /api counterpart to the route handler's own permission check, for
+// sections where more roles need API read access than should see the
+// management page (e.g. dispatchers read the service catalog to build a
+// booking, but only managers see the "manage services" page).
+function forPagePrefix(prefix: string) {
+  return (p: string) => p === prefix || p.startsWith(`${prefix}/`);
+}
+
 const ROLE_GATES: { test: (pathname: string) => boolean; roles: Role[] }[] = [
   {
     test: forPrefixes("/dashboard", "/calendar", "/live-map", "/bookings"),
@@ -42,7 +51,7 @@ const ROLE_GATES: { test: (pathname: string) => boolean; roles: Role[] }[] = [
     roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"],
   },
   { test: forPrefixes("/clients"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER"] },
-  { test: forPrefixes("/services"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
+  { test: forPagePrefix("/services"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
   { test: forPrefixes("/sales"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
   { test: forPrefixes("/expenses"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
   { test: forPrefixes("/performance"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
