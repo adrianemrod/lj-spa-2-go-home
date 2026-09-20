@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,21 @@ const ROLE_HOME: Record<string, string> = {
 };
 
 export default function LoginPage() {
+  return (
+    <div data-theme="ops" className="flex min-h-dvh items-center justify-center bg-bg px-4">
+      <div className="w-full max-w-sm">
+        <div className="mb-8 flex justify-center">
+          <Logo />
+        </div>
+        <Suspense fallback={<Card className="p-6" />}>
+          <LoginForm />
+        </Suspense>
+      </div>
+    </div>
+  );
+}
+
+function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const [email, setEmail] = useState("");
@@ -51,50 +66,43 @@ export default function LoginPage() {
   }
 
   return (
-    <div data-theme="ops" className="flex min-h-dvh items-center justify-center bg-bg px-4">
-      <div className="w-full max-w-sm">
-        <div className="mb-8 flex justify-center">
-          <Logo />
+    <Card className="p-6">
+      <h1 className="mb-1 font-serif text-xl text-fg">Sign in</h1>
+      <p className="mb-6 text-sm text-fg-muted">Operations Control Center</p>
+      <form onSubmit={onSubmit} className="space-y-4">
+        <div>
+          <Label htmlFor="email">Email</Label>
+          <Input
+            id="email"
+            type="email"
+            autoComplete="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+          />
         </div>
-        <Card className="p-6">
-          <h1 className="mb-1 font-serif text-xl text-fg">Sign in</h1>
-          <p className="mb-6 text-sm text-fg-muted">Operations Control Center</p>
-          <form onSubmit={onSubmit} className="space-y-4">
-            <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                autoComplete="current-password"
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-              />
-            </div>
-            <FieldError>{error ?? undefined}</FieldError>
-            <Button type="submit" className="w-full" disabled={loading}>
-              {loading ? "Signing in…" : "Sign in"}
-            </Button>
-          </form>
-          <p className="mt-6 text-center text-xs text-fg-muted">
-            Forgot your password?{" "}
-            <a href="/forgot-password" className="text-accent hover:underline">
-              Reset it
-            </a>
-          </p>
-        </Card>
-      </div>
-    </div>
+        <div>
+          <Label htmlFor="password">Password</Label>
+          <Input
+            id="password"
+            type="password"
+            autoComplete="current-password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <FieldError>{error ?? undefined}</FieldError>
+        <Button type="submit" className="w-full" disabled={loading}>
+          {loading ? "Signing in…" : "Sign in"}
+        </Button>
+      </form>
+      <p className="mt-6 text-center text-xs text-fg-muted">
+        Forgot your password?{" "}
+        <a href="/forgot-password" className="text-accent hover:underline">
+          Reset it
+        </a>
+      </p>
+    </Card>
   );
 }
