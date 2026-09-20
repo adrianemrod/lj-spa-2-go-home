@@ -20,46 +20,41 @@ const PUBLIC_PREFIXES = [
   "/icons",
 ];
 
-// Route matcher -> roles allowed. Unlisted authenticated paths are open to
-// any logged-in role (e.g. /account, a shared booking detail page).
-//
-// This is a coarse, page-and-API-prefix-level gate for UX (redirect away
-// from / 403 a section a role shouldn't see). It is NOT the security
-// boundary — every API route re-checks with requirePermission()/
-// requireRole() against the real RBAC matrix in src/lib/auth/permissions.ts
-// before touching Prisma, so a mistake here can't leak data.
-function forPrefixes(...prefixes: string[]) {
-  return (p: string) => prefixes.some((prefix) => p === prefix || p.startsWith(`${prefix}/`) || p.startsWith(`/api${prefix}`));
-}
-
-// Page-only variant: gates the page prefix but deliberately leaves its
-// /api counterpart to the route handler's own permission check, for
-// sections where more roles need API read access than should see the
-// management page (e.g. dispatchers read the service catalog to build a
-// booking, but only managers see the "manage services" page).
 function forPagePrefix(prefix: string) {
   return (p: string) => p === prefix || p.startsWith(`${prefix}/`);
 }
 
-const ROLE_GATES: { test: (pathname: string) => boolean; roles: Role[] }[] = [
-  {
-    test: forPrefixes("/dashboard", "/calendar", "/live-map", "/bookings"),
-    roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"],
-  },
-  {
-    test: forPrefixes("/therapists"),
-    roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"],
-  },
-  { test: forPrefixes("/clients"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER"] },
+// Page-level role gates ONLY — redirect-away UX for a section a role
+// shouldn't see. Deliberately does NOT cover /api/*: almost every API
+// route mixes "staff with permission X" access with a resource owner's
+// own self-service access (a therapist reading their own schedule, a
+// client reading their own booking), which a single coarse prefix rule
+// can't express without either blocking legitimate self-access or
+// opening the route to every authenticated role. Getting that mapping
+// wrong here previously 403'd a therapist calling their own
+// /api/therapists/me/schedule and a dispatcher calling /api/services —
+// both real bugs found by live testing, not typechecking.
+//
+// The actual security boundary is unchanged: every API route calls
+// requireSession()/requirePermission() against the RBAC matrix in
+// src/lib/auth/permissions.ts (or an explicit "isSelf" check) before
+// touching Prisma. This gate is just page-routing UX on top of that.
+const PAGE_ROLE_GATES: { test: (pathname: string) => boolean; roles: Role[] }[] = [
+  { test: forPagePrefix("/dashboard"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"] },
+  { test: forPagePrefix("/calendar"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"] },
+  { test: forPagePrefix("/live-map"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"] },
+  { test: forPagePrefix("/bookings"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"] },
+  { test: forPagePrefix("/therapists"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER", "ACCOUNTING"] },
+  { test: forPagePrefix("/clients"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER", "DISPATCHER"] },
   { test: forPagePrefix("/services"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
-  { test: forPrefixes("/sales"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
-  { test: forPrefixes("/expenses"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
-  { test: forPrefixes("/performance"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
-  { test: forPrefixes("/reports"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING", "MANAGER"] },
-  { test: forPrefixes("/settings"), roles: ["SUPER_ADMIN", "OWNER"] },
-  { test: forPrefixes("/audit-log"), roles: ["SUPER_ADMIN", "OWNER"] },
-  { test: forPrefixes("/app"), roles: ["THERAPIST"] }, // therapist PWA
-  { test: forPrefixes("/my"), roles: ["CLIENT"] }, // client self-service
+  { test: forPagePrefix("/sales"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
+  { test: forPagePrefix("/expenses"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING"] },
+  { test: forPagePrefix("/performance"), roles: ["SUPER_ADMIN", "OWNER", "MANAGER"] },
+  { test: forPagePrefix("/reports"), roles: ["SUPER_ADMIN", "OWNER", "ACCOUNTING", "MANAGER"] },
+  { test: forPagePrefix("/settings"), roles: ["SUPER_ADMIN", "OWNER"] },
+  { test: forPagePrefix("/audit-log"), roles: ["SUPER_ADMIN", "OWNER"] },
+  { test: forPagePrefix("/app"), roles: ["THERAPIST"] }, // therapist PWA
+  { test: forPagePrefix("/my"), roles: ["CLIENT"] }, // client self-service
 ];
 
 const ROLE_HOME: Record<Role, string> = {
@@ -110,9 +105,12 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
-  const gate = ROLE_GATES.find((g) => g.test(pathname));
+  // API authorization happens in the route handlers themselves — see the
+  // comment on PAGE_ROLE_GATES above.
+  if (isApi) return NextResponse.next();
+
+  const gate = PAGE_ROLE_GATES.find((g) => g.test(pathname));
   if (gate && !gate.roles.includes(session.role)) {
-    if (isApi) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     return NextResponse.redirect(new URL(ROLE_HOME[session.role], getAppUrl(req)));
   }
 
