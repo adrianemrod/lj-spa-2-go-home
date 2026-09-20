@@ -4,8 +4,20 @@ import { verifyPassword } from "@/lib/auth/password";
 import { createSession } from "@/lib/auth/session";
 import { loginSchema } from "@/lib/validation/auth";
 import { recordAudit } from "@/lib/audit";
+import { checkRateLimit, clientIp } from "@/lib/rate-limit";
+
+const LOGIN_ATTEMPT_LIMIT = 10;
+const LOGIN_WINDOW_MS = 5 * 60 * 1000;
 
 export async function POST(req: NextRequest) {
+  const rateLimit = checkRateLimit(`login:${clientIp(req)}`, LOGIN_ATTEMPT_LIMIT, LOGIN_WINDOW_MS);
+  if (!rateLimit.ok) {
+    return NextResponse.json(
+      { error: "Too many login attempts. Please try again in a few minutes." },
+      { status: 429 }
+    );
+  }
+
   const body = await req.json().catch(() => null);
   const parsed = loginSchema.safeParse(body);
   if (!parsed.success) {

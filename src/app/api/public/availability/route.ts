@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorResponse } from "@/lib/api-error";
+import { apiErrorResponse, FriendlyError } from "@/lib/api-error";
 import { getPublicAvailability } from "@/lib/scheduling/public-availability";
+import { checkRateLimit, clientIp } from "@/lib/rate-limit";
 
 const bodySchema = z.object({
   serviceId: z.string().uuid(),
@@ -12,6 +13,11 @@ const bodySchema = z.object({
 
 export async function POST(req: NextRequest) {
   try {
+    const rateLimit = checkRateLimit(`public-availability:${clientIp(req)}`, 30, 60 * 1000);
+    if (!rateLimit.ok) {
+      throw new FriendlyError("Too many requests. Please slow down.");
+    }
+
     const body = bodySchema.parse(await req.json());
     const availability = await getPublicAvailability({
       serviceId: body.serviceId,
