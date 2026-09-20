@@ -21,7 +21,7 @@ export interface PublicTherapistAvailability {
   nextAvailableStart: string | null;
 }
 
-function toPublicAvailability(r: TherapistRecommendation): PublicTherapistAvailability {
+export function toPublicAvailability(r: TherapistRecommendation): PublicTherapistAvailability {
   if (r.today.available) {
     return {
       therapistId: r.therapistId,

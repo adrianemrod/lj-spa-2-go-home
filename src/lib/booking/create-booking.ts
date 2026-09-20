@@ -7,6 +7,8 @@ import { recommendTherapistsForBooking } from "@/lib/scheduling/recommend";
 import { getTravelEstimate } from "@/lib/travel";
 import { minutesOfDayManila } from "@/lib/format";
 import { recordAudit } from "@/lib/audit";
+import { notify } from "@/lib/notifications";
+import { activePaymentProvider } from "@/lib/payments";
 import type { CreateBookingInput } from "@/lib/validation/booking";
 
 const ACTIVE_STATUSES = ["PENDING", "CONFIRMED", "ASSIGNED", "TRAVELING", "ARRIVED", "IN_SERVICE"] as const;
@@ -156,12 +158,25 @@ export async function createBooking(input: CreateBookingInput, createdById: stri
     });
 
     if (input.amountPaidNow > 0 && input.paymentMethod) {
+      // manualProvider resolves synchronously, so it's safe inside the
+      // transaction — a real async gateway (PayMongo/Stripe) would need
+      // this call moved outside, same as the travel-provider pattern
+      // above, so a slow network call never holds a DB transaction open.
+      const charge = await activePaymentProvider().charge({
+        amount: input.amountPaidNow,
+        currency: "PHP",
+        reference: bookingNumber,
+      });
+      if (!charge.ok) {
+        throw new FriendlyError(charge.error ?? "Payment could not be processed. Please try again.");
+      }
       await tx.payment.create({
         data: {
           bookingId: created.id,
           amount: input.amountPaidNow,
           method: input.paymentMethod,
           status: isFullyPaid ? "PAID" : "PARTIAL",
+          reference: charge.reference,
           isDeposit: !isFullyPaid,
           recordedById: createdById,
         },
@@ -172,5 +187,24 @@ export async function createBooking(input: CreateBookingInput, createdById: stri
   });
 
   await recordAudit({ userId: createdById, action: "CREATE", entity: "Booking", entityId: booking.id, after: booking });
+
+  if (booking.therapistId) {
+    const therapistUser = await prisma.therapist.findUnique({
+      where: { id: booking.therapistId },
+      select: { userId: true, user: { select: { phone: true } } },
+    });
+    if (therapistUser) {
+      await notify({
+        userId: therapistUser.userId,
+        channel: "SMS",
+        type: "BOOKING_ASSIGNED",
+        title: "New booking assigned",
+        body: `New booking ${booking.bookingNumber} on ${scheduledStart.toLocaleDateString("en-PH")} at ${scheduledStart.toLocaleTimeString("en-PH", { hour: "numeric", minute: "2-digit" })}.`,
+        to: therapistUser.user.phone ?? undefined,
+        bookingId: booking.id,
+      }).catch((err) => console.error("Failed to notify therapist of new booking", err));
+    }
+  }
+
   return booking;
 }

@@ -226,7 +226,7 @@ async function main() {
     if (existing) continue;
 
     const end = new Date(b.start.getTime() + service.durationMinutes * 60_000);
-    await prisma.booking.create({
+    const created = await prisma.booking.create({
       data: {
         bookingNumber,
         clientId: client.id,
@@ -255,6 +255,24 @@ async function main() {
         createdById: dispatcher.id,
       },
     });
+
+    // Seeded bookings are inserted directly rather than through
+    // transitionBooking() (there's no prior state to transition FROM), so
+    // completed ones need their Commission row created explicitly — the
+    // same math the real state machine applies on IN_SERVICE -> COMPLETED.
+    if (b.status === "COMPLETED") {
+      const commissionAmount = Math.round(((Number(service.price) * Number(service.commissionValue)) / 100) * 100) / 100;
+      await prisma.commission.create({
+        data: {
+          bookingId: created.id,
+          therapistId: therapist.id,
+          baseAmount: service.price,
+          commissionType: service.commissionType,
+          commissionValue: service.commissionValue,
+          commissionAmount,
+        },
+      });
+    }
   }
 
   console.log("Seed complete.");

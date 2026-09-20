@@ -19,6 +19,7 @@ export const NAV_ITEMS: NavItem[] = [
   { label: "Expenses", href: "/expenses", icon: "Receipt", permission: "expenses:read" },
   { label: "Performance", href: "/performance", icon: "BarChart3", permission: "performance:read" },
   { label: "Reports", href: "/reports", icon: "FileText", permission: "reports:read" },
+  { label: "Notifications", href: "/notifications", icon: "Bell" },
   { label: "Settings", href: "/settings", icon: "Settings", permission: "settings:manage" },
   { label: "Audit Log", href: "/audit-log", icon: "ShieldCheck", permission: "audit:read" },
 ];

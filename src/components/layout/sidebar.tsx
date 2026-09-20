@@ -16,6 +16,7 @@ import {
   FileText,
   Settings,
   ShieldCheck,
+  Bell,
   type LucideIcon,
 } from "lucide-react";
 import { Logo } from "@/components/brand/logo";
@@ -36,6 +37,7 @@ const ICONS: Record<string, LucideIcon> = {
   FileText,
   Settings,
   ShieldCheck,
+  Bell,
 };
 
 export function Sidebar({ items }: { items: NavItem[] }) {

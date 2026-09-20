@@ -5,6 +5,7 @@ import { canTransitionBooking, InvalidBookingTransitionError } from "@/lib/booki
 import { canTransitionTherapistStatus } from "@/lib/therapist-status/state-machine";
 import { calculateCommission, resolveCommissionRule } from "@/lib/booking/commission";
 import { recordAudit } from "@/lib/audit";
+import { notify } from "@/lib/notifications";
 
 /**
  * A booking transition is never just a status column write — it drives the
@@ -20,7 +21,7 @@ export async function transitionBooking(params: {
   note?: string;
   cancelReason?: string;
 }): Promise<void> {
-  await prisma.$transaction(async (tx) => {
+  const booking = await prisma.$transaction(async (tx) => {
     const booking = await tx.booking.findUniqueOrThrow({
       where: { id: params.bookingId },
       include: { service: true },
@@ -89,7 +90,27 @@ export async function transitionBooking(params: {
       before: { status: booking.status },
       after: { status: params.toStatus },
     });
+
+    return booking;
   });
+
+  if (booking.therapistId && (params.toStatus === "CANCELLED" || params.toStatus === "NO_SHOW")) {
+    const therapist = await prisma.therapist.findUnique({
+      where: { id: booking.therapistId },
+      select: { userId: true, user: { select: { phone: true } } },
+    });
+    if (therapist) {
+      await notify({
+        userId: therapist.userId,
+        channel: "SMS",
+        type: `BOOKING_${params.toStatus}`,
+        title: params.toStatus === "CANCELLED" ? "Booking cancelled" : "Booking marked no-show",
+        body: `Booking ${booking.bookingNumber} was ${params.toStatus === "CANCELLED" ? "cancelled" : "marked as a no-show"}.${params.cancelReason ? ` Reason: ${params.cancelReason}` : ""}`,
+        to: therapist.user.phone ?? undefined,
+        bookingId: booking.id,
+      }).catch((err) => console.error("Failed to notify therapist of booking cancellation", err));
+    }
+  }
 }
 
 type Tx = Prisma.TransactionClient;
