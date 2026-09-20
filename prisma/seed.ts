@@ -22,6 +22,19 @@ async function main() {
   console.log("Seeding L&J Spa 2 Go Home…");
   const passwordHash = await bcrypt.hash(PASSWORD, 12);
 
+  // ---- System user (attribution for public-website bookings) ----
+  await prisma.user.upsert({
+    where: { email: "system@ljspa2go.ph" },
+    update: {},
+    create: {
+      email: "system@ljspa2go.ph",
+      name: "Online Booking",
+      role: "SUPER_ADMIN",
+      passwordHash: await bcrypt.hash(crypto.randomUUID(), 12), // no interactive login
+      status: "DISABLED",
+    },
+  });
+
   // ---- Staff users, one per role ----
   const staff = await Promise.all([
     prisma.user.upsert({
