@@ -44,8 +44,8 @@ async function main() {
     }),
     prisma.user.upsert({
       where: { email: "owner@ljspa2go.ph" },
-      update: {},
-      create: { email: "owner@ljspa2go.ph", name: "Jonas Reyes (Owner)", phone: "09170000002", role: "OWNER", passwordHash },
+      update: { name: "Jovie Mirabel (Owner)" },
+      create: { email: "owner@ljspa2go.ph", name: "Jovie Mirabel (Owner)", phone: "09170000002", role: "OWNER", passwordHash },
     }),
     prisma.user.upsert({
       where: { email: "manager@ljspa2go.ph" },
