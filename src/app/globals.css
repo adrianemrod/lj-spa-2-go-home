@@ -2,9 +2,9 @@
 
 /*
   L&J Spa 2 Go Home — design tokens.
-  Premium / minimalist / dark luxury. Burgundy is an ACCENT, never a
-  background flood. Admin surfaces default to the dark theme (operations
-  center feel); the public booking site defaults to warm off-white.
+  Premium / minimalist, matching the real logo's palette exactly: white
+  background, burgundy and black only — no dark/black surfaces anywhere.
+  Burgundy is an ACCENT, never a background flood.
 */
 
 :root {
@@ -17,8 +17,8 @@
   --color-off-white: #f7f5f2;
   --color-gray-muted: #8a8a8a;
 
-  --color-bg: var(--color-off-white);
-  --color-bg-elevated: #ffffff;
+  --color-bg: var(--color-white);
+  --color-bg-elevated: var(--color-white);
   --color-fg: #171310;
   --color-fg-muted: #6b6560;
   --color-border: #e6e1da;
@@ -39,15 +39,22 @@
   --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
-/* Operations surfaces (admin, dispatcher, therapist app) — dark luxury. */
+/*
+  Operations surfaces (admin, dispatcher, therapist app) previously used a
+  black "dark luxury" theme. Per brand direction, everything now matches
+  the logo's actual palette — white background, burgundy accent, black
+  text — so this block just mirrors :root. Kept as its own selector
+  (rather than deleting `data-theme="ops"` from every layout) so a surface
+  can still be tuned independently later without touching every page.
+*/
 [data-theme="ops"] {
-  --color-bg: var(--color-black);
-  --color-bg-elevated: var(--color-black-soft);
-  --color-fg: #f2efe9;
-  --color-fg-muted: #a8a29a;
-  --color-border: #262220;
-  --color-accent: #b3241f;
-  --color-accent-deep: var(--color-burgundy);
+  --color-bg: var(--color-white);
+  --color-bg-elevated: var(--color-white);
+  --color-fg: #171310;
+  --color-fg-muted: #6b6560;
+  --color-border: #e6e1da;
+  --color-accent: var(--color-burgundy);
+  --color-accent-deep: var(--color-burgundy-deep);
 }
 
 @theme inline {

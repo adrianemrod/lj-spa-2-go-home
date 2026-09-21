@@ -14,7 +14,7 @@ export default async function BookPage() {
     <div className="min-h-dvh bg-bg px-4 py-8 sm:px-8">
       <div className="mx-auto mb-8 max-w-xl">
         <Link href="/">
-          <Logo tone="dark" />
+          <Logo />
         </Link>
       </div>
       <BookingWizard services={services.map((s) => ({ ...s, price: s.price.toString() }))} />

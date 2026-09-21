@@ -15,7 +15,7 @@ export default async function HomePage() {
   return (
     <div className="min-h-dvh bg-bg">
       <header className="flex items-center justify-between px-6 py-5 sm:px-10">
-        <Logo tone="dark" />
+        <Logo />
         <Link href="/login" className="text-sm text-fg-muted hover:text-fg">
           Staff Login
         </Link>
